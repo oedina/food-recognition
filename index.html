@@ -1,0 +1,142 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Food Recognition</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#3b82f6">
+    <meta name="description" content="Recognize food from photos">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <!-- Link to Manifest -->
+    <link rel="manifest" href="/manifest.json">
+    <!-- Favicon and App Icons -->
+    <link rel="icon" href="/icon-192.png">
+    <link rel="apple-touch-icon" href="/icon-192.png">
+    <style>
+        body { background-color: #f3f4f6; }
+        #log-container { max-height: 200px; overflow-y: auto; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4">
+    <h1 class="text-3xl font-bold mb-6 text-gray-800">Food Recognition</h1>
+    <div class="w-full max-w-md bg-white rounded-lg shadow-md p-6">
+        <video id="video" class="w-full h-64 rounded-md mb-4" autoplay></video>
+        <button id="capture-btn" class="w-full bg-blue-500 text-white py-2 px-4 rounded-md hover:bg-blue-600 mb-4">
+            Capture Photo
+        </button>
+        <canvas id="canvas" class="hidden"></canvas>
+        <img id="captured-image" class="w-full h-64 object-cover rounded-md mb-4 hidden" alt="Captured food">
+        <div id="result" class="text-lg font-semibold text-gray-700 mb-4"></div>
+        <div id="log-container" class="bg-gray-100 p-4 rounded-md text-sm text-gray-600"></div>
+    </div>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const capturedImage = document.getElementById('captured-image');
+        const captureBtn = document.getElementById('capture-btn');
+        const resultDiv = document.getElementById('result');
+        const logContainer = document.getElementById('log-container');
+
+        function logMessage(message) {
+            const logEntry = document.createElement('p');
+            logEntry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+                logMessage('Camera started successfully.');
+            } catch (err) {
+                logMessage('Error accessing camera: ' + err.message);
+                resultDiv.textContent = 'Camera access denied.';
+            }
+        }
+
+        captureBtn.addEventListener('click', () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            capturedImage.src = canvas.toDataURL('image/jpeg');
+            capturedImage.classList.remove('hidden');
+            logMessage('Photo captured.');
+            sendImageToBackend(canvas.toDataURL('image/jpeg'));
+        });
+
+        async function sendImageToBackend(imageData) {
+            try {
+                captureBtn.disabled = true;
+                logMessage('Sending image to backend...');
+                const response = await fetch('YOUR_API_ENDPOINT', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image: imageData })
+                });
+                const data = await response.json();
+                resultDiv.textContent = `Recognized: ${data.food || 'Unknown'}`;
+                logMessage(`Backend response: ${data.food || 'Unknown'}`);
+            } catch (err) {
+                logMessage('Error sending image: ' + err.message);
+                resultDiv.textContent = 'Error processing image.';
+            } finally {
+                captureBtn.disabled = false;
+            }
+        }
+
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(reg => logMessage('Service Worker registered.'))
+                    .catch(err => logMessage('Service Worker error: ' + err));
+            });
+        }
+
+        window.onload = startCamera;
+    </script>
+</body>
+</html>
