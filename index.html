@@ -62,13 +62,24 @@
 <body class="min-h-screen flex flex-col items-center justify-center p-4">
     <h1 class="text-3xl font-bold mb-6 text-gray-800">Food Recognition</h1>
     <div class="w-full max-w-md bg-white rounded-lg shadow-md p-6">
-        <video id="video" class="w-full h-64 rounded-md mb-4" autoplay></video>
+        <!-- Camera selection -->
+        <select id="camera-select" class="w-full mb-4 p-2 border rounded-md text-gray-700">
+            <option value="environment">Back Camera</option>
+            <option value="user">Front Camera</option>
+        </select>
+        <!-- Video feed -->
+        <video id="video" class="w-full h-64 rounded-md mb-4" autoplay playsinline></video>
+        <!-- Capture button -->
         <button id="capture-btn" class="w-full bg-blue-500 text-white py-2 px-4 rounded-md hover:bg-blue-600 mb-4">
             Capture Photo
         </button>
+        <!-- Canvas for capturing -->
         <canvas id="canvas" class="hidden"></canvas>
+        <!-- Captured image preview -->
         <img id="captured-image" class="w-full h-64 object-cover rounded-md mb-4 hidden" alt="Captured food">
+        <!-- Result display -->
         <div id="result" class="text-lg font-semibold text-gray-700 mb-4"></div>
+        <!-- Log display -->
         <div id="log-container" class="bg-gray-100 p-4 rounded-md text-sm text-gray-600"></div>
     </div>
 
@@ -77,8 +88,11 @@
         const canvas = document.getElementById('canvas');
         const capturedImage = document.getElementById('captured-image');
         const captureBtn = document.getElementById('capture-btn');
+        const cameraSelect = document.getElementById('camera-select');
         const resultDiv = document.getElementById('result');
         const logContainer = document.getElementById('log-container');
+
+        let currentStream = null;
 
         function logMessage(message) {
             const logEntry = document.createElement('p');
@@ -87,25 +101,62 @@
             logContainer.scrollTop = logContainer.scrollHeight;
         }
 
-        async function startCamera() {
+        async function startCamera(facingMode = 'environment') {
+            // Stop existing stream if any
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: facingMode, width: { ideal: 1280 }, height: { ideal: 720 } }
+                });
+                currentStream = stream;
                 video.srcObject = stream;
-                logMessage('Camera started successfully.');
+                logMessage(`Camera started: ${facingMode === 'environment' ? 'Back' : 'Front'}`);
             } catch (err) {
                 logMessage('Error accessing camera: ' + err.message);
                 resultDiv.textContent = 'Camera access denied.';
             }
         }
 
-        captureBtn.addEventListener('click', () => {
+        // Handle camera selection
+        cameraSelect.addEventListener('change', () => {
+            startCamera(cameraSelect.value);
+        });
+
+        // Fix orientation for captured image
+        async function captureAndCorrectImage() {
+            const context = canvas.getContext('2d');
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
-            canvas.getContext('2d').drawImage(video, 0, 0);
-            capturedImage.src = canvas.toDataURL('image/jpeg');
+
+            // Detect device orientation (simplified, assumes portrait or landscape)
+            const orientation = window.orientation || 0;
+            const isLandscape = Math.abs(orientation) === 90;
+
+            // Draw video frame to canvas
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            // Correct rotation if needed
+            if (isLandscape) {
+                canvas.width = video.videoHeight;
+                canvas.height = video.videoWidth;
+                context.translate(canvas.width / 2, canvas.height / 2);
+                context.rotate((orientation * Math.PI) / 180);
+                context.drawImage(video, -video.videoWidth / 2, -video.videoHeight / 2);
+            }
+
+            // Convert canvas to image
+            const imageData = canvas.toDataURL('image/jpeg');
+            capturedImage.src = imageData;
             capturedImage.classList.remove('hidden');
-            logMessage('Photo captured.');
-            sendImageToBackend(canvas.toDataURL('image/jpeg'));
+            logMessage('Photo captured and orientation corrected.');
+            return imageData;
+        }
+
+        captureBtn.addEventListener('click', async () => {
+            const imageData = await captureAndCorrectImage();
+            sendImageToBackend(imageData);
         });
 
         async function sendImageToBackend(imageData) {
@@ -128,6 +179,7 @@
             }
         }
 
+        // Register Service Worker
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('/sw.js')
@@ -136,7 +188,8 @@
             });
         }
 
-        window.onload = startCamera;
+        // Start camera on load
+        window.onload = () => startCamera();
     </script>
 </body>
 </html>
